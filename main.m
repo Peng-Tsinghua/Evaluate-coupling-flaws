@@ -1,5 +1,10 @@
-% reference
-% [1]. P. M. Anderson and A. A. Fouad, Power system control and stability. IEEE, 2003.
+% This program evaluates COUPLING FLAWS in 10 power-grid benchmark under
+% nominal and volatile operating conditions, which leads to results in
+% Table 1. It automatically outputs 10 data files (xxx.mat) that store
+% \lambda_1 and the dimension of negative eigenvalues
+
+% Reference
+% [1] P. M. Anderson and A. A. Fouad, Power system control and stability. IEEE, 2003.
 % [2] M. A. Pai, Energy Function Analysis for Power System Stability,Kluwer Academic Publishers, Boston, 1989.
 % [3] Athay, T.; Podmore, R.; Virmani, S., "A Practical Method for the Direct Analysis of Transient Stability," IEEE Transactions on Power Apparatus and Systems , vol.PAS-98, no.2, pp.573-584, March 1979.
 % [4] V. Vittal, “Transient stability test systems for direct stability methods,” IEEE Transactions on Power Systems, vol. 7, no. 1, pp. 37–43, Feb. 1992, doi: 10.1109/59.141684.
@@ -8,41 +13,31 @@ clear;clc;
 define_constants;
 mpopt=mpoption('pf.nr.max_it',50);
 
-for Case=4 % 1--9bus; 2--39bus
+for Case=1:10 
 switch Case
     case 1
         mpc0=loadcase('case9');
-%         load('0IEEE9bus');
     case 2
         mpc0=loadcase('case14');
-%         load('0IEEE39bus');
     case 3
         mpc0=loadcase('case39');
-%         load('0IEEE118bus');
     case 4
         mpc0=loadcase('case118');
-%         load('0IEEE145bus');
     case 5
         mpc0=loadcase('case145');
-%         load('0Polish3120sp');
     case 6
         mpc0=loadcase('case_illinois200');
-%         load('0IEEE14bus');
     case 7
         mpc0=loadcase('case300');
         mpc0=ext2int(mpc0);
-%         load('0IEEE300bus');
     case 8
         mpc0=loadcase('case_ACTIVSg500');
         mpc0=ext2int(mpc0);
-%         load('0Illinois200');
     case 9
         mpc0=loadcase('case1888rte');
         mpc0=ext2int(mpc0);
-%         load('0RTE1888');
     case 10
         mpc0=loadcase('case3120sp');
-%         load('0Sg500');
     otherwise
         disp('Case wrong!')
 end
@@ -50,7 +45,6 @@ LDbus=find(mpc0.bus(:,PD)>0); % find load bus index
 nLD=length(LDbus); % total number of loads
 indexSG=find(mpc0.gen(:,GEN_STATUS)==1); % index of turn-on SG
 indexGen=find(mpc0.gen(:,PG)>0); % index of SG in matrix mpc.gen in MATPOWER case. The rest are condensors
-% SGbus=mpc0.gen(indexGen,1); % bus index of generators
 SGbus=mpc0.gen(indexSG,1); 
 nSG=length(SGbus); % total number of generators
 n0=size(mpc0.bus,1); % total number of buses
@@ -124,43 +118,37 @@ index_reduce=1:n0+nSG;
 index_reduce(index_left)=[];
 Yre=KronRe_new(Ypre,index_reduce',index_left);
 Bbus=full(imag(Yre));
-Bbus=1/2*(Bbus'+Bbus); % 对称化消除计算误差
+Bbus=1/2*(Bbus'+Bbus); % Eliminate numerical errors
+
 % get nominal operation point by AC-pf solover
 result0=runpf(mpc0);
 V0=result0.bus(:,VM);the0=result0.bus(:,VA)/180*pi;
 [E,del]=Vthe2Edel(V0(SGbus),the0(SGbus),xdd,...
     result0.gen(indexSG,PG)/mpc0.baseMVA,...
-    result0.gen(indexSG,QG)/mpc0.baseMVA); %steady-state发电机内电势
+    result0.gen(indexSG,QG)/mpc0.baseMVA); % get SG's voltage behind the transient reactance
 V=[V0(LDbus);E]; the=[the0(LDbus);del];
 U=V.*exp(1i*the);
 I=1i*Bbus*U;
 S=U.*conj(I);
 P=real(S);Q=imag(S);
+
 % calculate \lambda in the nominal case
-% Bbus0: whiteout bi
-Bbus0=Bbus-diag(diag(Bbus));
+Bbus0=Bbus-diag(diag(Bbus));% Bbus0: whiteout bi
 G=graph(Bbus0);Incid=incidence(G);
 Bbus0=Bbus0-diag(sum(Bbus0));
 
-
+% construct matrix \Gamma and calculate its minimal eigenvalue
 Bzz=func_Bzz(the,V,Bbus0);
 Schur=Bzz(n+1:end,n+1:end)-Bzz(1:n,n+1:end)'*pinv(Bzz(1:n,1:n))*Bzz(1:n,n+1:end);
-l0=min(eig((Schur+Schur')/2)); % 对称化消除计算误差
-% lB=min(eig(-Bbus));
-c1=-2*sum(sum(Bbus));% -2*sum(bi)
-c20=sum(2*P.*cos(2*the)./V.^2-Q.*(1-sin(2*the))./V.^2);
-c0=c1+c20;
-% disp([Case,l0,lB,c1,c0])
+l0=min(eig((Schur+Schur')/2)); 
 
+% save the nominal case as the 1st case
 N=1000; % number of all cases
-l=zeros(N,1);c=l;c2=c;nn=l;
-Vd=zeros(n,N);
-% the nominal case as the 1st case
+l=zeros(N,1);nn=l; % l stores the minimal eigenvalue; nn stores the dimension of negative eigenvalues
+Vd=zeros(n,N); % Vd stores the voltage phasors
 Vd(:,1)=U;
 l(1)=l0;
 nn(1)=length(find(eig(Schur)<0)); 
-c2(1)=c20;
-c(1)=c0;
 
 %% random scenario
 i=1; % initialize the counter
@@ -180,6 +168,7 @@ while i<N
     mpc1.gen(indexGen,PG)=mpc1.gen(indexGen,PG)+Pim*0.2.*result0.gen(indexGen,PG)./Pca; % dispatch fast-ramping generation
     mpc1.bus(LDbus,PD)=mpc1.bus(LDbus,PD)-Pim*0.05.*mpc0.bus(LDbus,PD)./Pca; % dispatch controllable loads
     mpc1.bus(LDbus,QD)=mpc0.bus(LDbus,QD).*mpc1.bus(LDbus,PD)./mpc0.bus(LDbus,PD); % assume constant power factor
+   
     % calculate \lambda
     % try to solve volatile case by AC-pf solover
     result=runpf(mpc1,mpopt);
@@ -188,7 +177,7 @@ while i<N
         V0=result.bus(:,VM);the0=result.bus(:,VA)/180*pi;
         [E,del]=Vthe2Edel(V0(SGbus),the0(SGbus),xdd,...
             result0.gen(indexSG,PG)/mpc0.baseMVA,...
-            result0.gen(indexSG,QG)/mpc0.baseMVA); %steady-state发电机内电势
+            result0.gen(indexSG,QG)/mpc0.baseMVA); 
         V=[V0(LDbus);E]; the=[the0(LDbus);del];
         if min(cos(Incid'*the))>=0 % check cohesive phase
             i=i+1;
@@ -210,29 +199,27 @@ end
 %%
 figure,plot(l,'LineStyle','none','Marker','.');
 ylabel('\lambda')
-% figure,plot(c,'LineStyle','none','Marker','.');
-% ylabel('C')
 %% Save data
 switch Case
     case 1
-        save('0IEEE9bus','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0IEEE9bus','Bbus','l0','Vd','l','nn');
     case 2
-        save('0IEEE14bus','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0IEEE14bus','Bbus','l0','Vd','l','nn');
     case 3
-        save('0IEEE39bus','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0IEEE39bus','Bbus','l0','Vd','l','nn');
     case 4
-        save('0IEEE118bus','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0IEEE118bus','Bbus','l0','Vd','l','nn');
     case 5
-        save('0IEEE145bus','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0IEEE145bus','Bbus','l0','Vd','l','nn');
     case 6
-        save('0Illinois200','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0Illinois200','Bbus','l0','Vd','l','nn');
     case 7
-        save('0IEEE300bus','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0IEEE300bus','Bbus','l0','Vd','l','nn');
     case 8
-        save('0Sg500','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0Sg500','Bbus','l0','Vd','l','nn');
     case 9
-        save('0RTE1888','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0RTE1888','Bbus','l0','Vd','l','nn');
     case 10
-        save('0Polish3120sp','Bbus','l0','c1','Vd','l','nn','c2','c');
+        save('0Polish3120sp','Bbus','l0','Vd','l','nn');
 end
 end
